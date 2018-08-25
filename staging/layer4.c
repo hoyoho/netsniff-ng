@@ -108,7 +108,7 @@
 		"\n"
 
 #define MZ_TCP_HELP \
-   		"| TCP type: Send raw TCP packets.\n" \
+		"| TCP type: Send raw TCP packets.\n" \
 		"|\n" \
 		"| Parameters  Values                               Explanation \n"  \
 		"| ----------  ------------------------------------ -------------------\n" \
@@ -117,9 +117,14 @@
 		"|  flags      fin|syn|rst|psh|ack|urg|ecn|cwr\n" \
 		"|  s          0-4294967295                         Sequence Nr.\n" \
 		"|  a          0-4294967295                         Acknowledgement Nr.\n" \
-		"|  win        0-65535                              Window Size\n" \
+		"|  win        0-65535							    Window Size\n" \
 		"|  urg        0-65535                              Urgent Pointer\n" \
 		"|  tcp_sum    0-65535                              Checksum\n" \
+		"|  mss        0-65535                              TCP MSS\n" \
+		"|  sack       0-1                                  Sack Enable\n" \
+		"|  ws_opt     0-15                                 Window Scale\n" \
+		"|  ts         0-65535_0-65535                      Timestamps\n" \
+		"|  island     0-4_l1_r1_l2_r2...l4_r4              Sack island\n" \
 		"|\n" \
 		"| The port numbers can be specified as ranges, e. g. \"dp=1023-33700\".\n" \
 		"| Multiple flags can be specified such as \"flags=syn|ack|urg\".\n" \
@@ -704,8 +709,9 @@ libnet_ptag_t  create_tcp_packet (libnet_t *l)
    char argval[MAX_PAYLOAD_SIZE], *dummy1, *dummy2;
    int T; // only an abbreviation for tx.packet_mode 
    int i;
-   
-   u_int8_t tcp_default_options[] = 
+
+   u_int32_t tcp_option_length = 0;	  
+   u_int8_t tcp_options_buffer[] = 
      {
 	  0x02, 0x04, 0x05, 0xac,                                     // MSS
 	  0x04, 0x02,                                                 // SACK permitted
@@ -713,9 +719,7 @@ libnet_ptag_t  create_tcp_packet (libnet_t *l)
 	  0x01,                                                       // NOP
 	  0x03, 0x03, 0x05                                            // Window Scale 5
      };
-   
-	  
-   
+
    /////////////////////////////
    // Default TCP header fields
    // Already reset in init.c
@@ -812,6 +816,59 @@ libnet_ptag_t  create_tcp_packet (libnet_t *l)
         tx.tcp_sum = (u_int16_t) str2int(argval);
      }
 
+	if (getarg(tx.arg_string,"mss", argval)==1)
+	  {
+		 tx.tcp_mss = (u_int16_t) str2int(argval);
+		 tx.tcp_option_flag |= TCP_OPTION_MSS;
+	  }
+
+	if (getarg(tx.arg_string,"sack", argval)==1)
+	  {
+		 if(1 == (u_int16_t) str2int(argval))
+		 {
+		 	tx.tcp_option_flag |= TCP_OPTION_SACK_PMT;
+		 }
+	  }
+
+	if (getarg(tx.arg_string,"ws_opt", argval)==1)
+	  {
+		 tx.tcp_win_scale = (u_int16_t) str2int(argval);
+		 tx.tcp_option_flag |= TCP_OPTION_WIN_SCALING;
+	  }
+	
+	if (getarg(tx.arg_string,"ts", argval)==1)
+     {
+	//generally speaking, there would be tow time values:
+		dummy1 = strtok(argval, "_");
+		tx.tcp_ts_val = (u_int32_t) str2int (dummy1);
+		if (  (dummy2 = strtok(NULL, "_")) == NULL ) // no additional value
+		  {
+		     tx.tcp_ts_ecr = 0;
+		  }
+		else
+		  {
+		     tx.tcp_ts_ecr = (u_int32_t) str2int (dummy2);
+		  }
+		  tx.tcp_option_flag |= TCP_OPTION_TIMESTAMPS;
+     }
+	
+	if (getarg(tx.arg_string,"island", argval)==1)
+     {
+		//seperate the islands infomation by "_".
+		dummy1 = strtok(argval, "_");
+		tx.tcp_islands_num = (u_int32_t) str2int (dummy1);
+		for(i = 0; (dummy2 = strtok(NULL, "_")) != NULL; i++)
+			{
+				tx.tcp_islands[i] = (u_int32_t) str2int (dummy2);
+			}
+		if(tx.tcp_islands_num != (i / 2))
+			{
+				fprintf(stderr, "Wrong islands parameters!");
+	     		exit(0);
+			}
+		 tx.tcp_option_flag |= TCP_OPTION_ISLANDS;
+     }
+
    // Check if hex_payload already specified (externally)
    if (tx.hex_payload_s)
      {
@@ -830,8 +887,6 @@ libnet_ptag_t  create_tcp_packet (libnet_t *l)
      {
 	strncpy((char *)tx.tcp_payload, (char *)tx.ascii_payload, MAX_PAYLOAD_SIZE);
 	tx.tcp_payload_s = strlen((char *)tx.ascii_payload);
-	tx.tcp_len = 20 + tx.tcp_payload_s;   // only needed by libnet to calculate checksum
-	tx.ip_payload_s = tx.tcp_len;         // for create_ip_packet
      }
    
    
@@ -853,49 +908,106 @@ libnet_ptag_t  create_tcp_packet (libnet_t *l)
      }
 
 
-   
-   tx.tcp_len = 20 + tx.tcp_payload_s;       // only needed by libnet to calculate checksum
-   tx.ip_payload_s = tx.tcp_len;         // for create_ip_packet
 
-   if (tx.tcp_control & 0x02) // packets with syn require an MSS option 
-     {
-	t2 = libnet_build_tcp_options(tcp_default_options,
-				     20, 
+   if(0 != tx.tcp_option_flag)
+   	{	
+
+		if (tx.tcp_control & 0x02) // packets with syn does not require sack islands.
+		  {
+		  	tx.tcp_option_flag &= ~TCP_OPTION_ISLANDS;
+		  }
+
+		if( tx.tcp_option_flag & TCP_OPTION_MSS)
+			{
+			   	tcp_options_buffer[tcp_option_length++] = 0x02;
+				tcp_options_buffer[tcp_option_length++] = 0x04;
+				*((u_int16_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_mss;
+				reverse_byte(&tcp_options_buffer[tcp_option_length],2);
+				tcp_option_length += 2;
+			}
+		
+		if( tx.tcp_option_flag & TCP_OPTION_SACK_PMT)
+			{
+				if((tx.tcp_option_flag & TCP_OPTION_TIMESTAMPS) == 0)//不用顶格写
+				{
+					tcp_options_buffer[tcp_option_length++] = 0x01;
+					tcp_options_buffer[tcp_option_length++] = 0x01;
+				}
+				tcp_options_buffer[tcp_option_length++] = 0x04;
+				tcp_options_buffer[tcp_option_length++] = 0x02;
+			}
+
+   		if( tx.tcp_option_flag & TCP_OPTION_TIMESTAMPS)
+   			{
+				if((tx.tcp_option_flag & TCP_OPTION_SACK_PMT) == 0 )
+					{
+						tcp_options_buffer[tcp_option_length++] = 0x01;
+						tcp_options_buffer[tcp_option_length++] = 0x01;
+					}
+
+				tcp_options_buffer[tcp_option_length++] = 0x08;
+				tcp_options_buffer[tcp_option_length++] = 0x0A;
+
+				*((u_int32_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_ts_val;
+				reverse_byte(&tcp_options_buffer[tcp_option_length],4);
+				tcp_option_length += 4;
+				*((u_int32_t*)(&tcp_options_buffer[tcp_option_length]))= tx.tcp_ts_ecr;
+				reverse_byte(&tcp_options_buffer[tcp_option_length],4);
+				tcp_option_length += 4;
+   			}
+		
+		if( tx.tcp_option_flag & TCP_OPTION_WIN_SCALING)	
+			{
+				tcp_options_buffer[tcp_option_length++] = 0x01;
+				tcp_options_buffer[tcp_option_length++] = 0x03;
+				tcp_options_buffer[tcp_option_length++] = 0x03;
+				tcp_options_buffer[tcp_option_length++] = tx.tcp_win_scale;
+			}
+		
+		if(tx.tcp_option_flag & TCP_OPTION_ISLANDS)
+			{
+				tcp_options_buffer[tcp_option_length++] = 0x01;
+				tcp_options_buffer[tcp_option_length++] = 0x01;
+				tcp_options_buffer[tcp_option_length++] = 0x05;
+				tcp_options_buffer[tcp_option_length++] = 2 + tx.tcp_islands_num * 8;
+
+				for(i = 0; i != (tx.tcp_islands_num << 1); i++)
+				{
+					*((u_int32_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_islands[i];
+					reverse_byte(&tcp_options_buffer[tcp_option_length],4);
+					tcp_option_length += 4;
+				}
+			}
+
+		t2 = libnet_build_tcp_options(tcp_options_buffer,
+				     tcp_option_length, 
 				     l, 
 				     0);
-	
-	if (t2 == -1)
-	  {
-	     fprintf(stderr, " mz/create_tcp_packet: Can't build TCP options: %s\n", libnet_geterror(l));
-	     exit (0);
-	  }
+		 if (t2 == -1)
+		   {
+			  fprintf(stderr, " mz/create_tcp_packet: Can't build TCP options: %s\n", libnet_geterror(l));
+			  exit (0);
+		   }
+		}
 
-	tx.tcp_len += 20;
-	tx.tcp_offset = 10;
-	tx.ip_payload_s = tx.tcp_len;	// for create_ip_packet
-	tx.tcp_sum_part = libnet_in_cksum((u_int16_t *) tcp_default_options, 20);
-     }
-   else
-     {
-       tx.tcp_offset = 5;
-       tx.tcp_sum_part = 0;
-     }
 
-   t = libnet_build_tcp (tx.sp, 
-			 tx.dp, 
-			 tx.tcp_seq, 
-			 tx.tcp_ack,
-			 tx.tcp_control,
-			 tx.tcp_win, 
-			 tx.tcp_sum,
-			 tx.tcp_urg, 
-			 tx.tcp_len,
-			 (tx.tcp_payload_s) ? tx.tcp_payload : NULL,
-			 tx.tcp_payload_s, 
-			 l, 
-			 0);
-
-   
+		tx.tcp_len = 20 + tcp_option_length + tx.tcp_payload_s;       // only needed by libnet to calculate checksum
+	    tx.ip_payload_s = tx.tcp_len;         // for create_ip_packet
+	   	tx.tcp_offset += tcp_option_length / 4;
+		tx.tcp_sum_part = libnet_in_cksum((u_int16_t *) tcp_options_buffer, tcp_option_length);
+		t = libnet_build_tcp (tx.sp, 
+				 tx.dp, 
+				 tx.tcp_seq, 
+				 tx.tcp_ack,
+				 tx.tcp_control,
+				 tx.tcp_win, 
+				 tx.tcp_sum,
+				 tx.tcp_urg, 
+				 tx.tcp_len,
+				 (tx.tcp_payload_s) ? tx.tcp_payload : NULL,
+				 tx.tcp_payload_s, 
+				 l, 
+				 t);
    
    // Libnet IPv6 checksum calculation can't deal with extension headers, we have to do it ourself...
    libnet_toggle_checksum(l, t, (tx.tcp_sum || ipv6_mode) ? LIBNET_OFF : LIBNET_ON);

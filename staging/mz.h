@@ -540,6 +540,7 @@ unsigned long int str2int(char *str);       // converts "65535" to 65535
 unsigned long long int str2lint(char *str); // same but allows 64-bit integers
 unsigned long int xstr2int(char *str);      // converts "ffff" to 65535
 unsigned long long int xstr2lint(char *str);     // same but allows 64-bit integers
+void reverse_byte(uint8_t *byte_array, int len);
 int mz_strisbinary(char *str);
 int mz_strisnum(char *str);
 int mz_strishex(char *str);

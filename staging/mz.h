@@ -71,7 +71,7 @@ static inline void verbose_l2(const char *format, ...)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 //
-#define MAUSEZAHN_VERSION "Mausezahn 0.40 - (C) 2007-2010 by Herbert Haas - http://www.perihel.at/sec/mz/"
+#define MAUSEZAHN_VERSION "Mausezahn 0.6.4.1 - (C) 2007-2018 by Herbert Haas - http://www.perihel.at/sec/mz/"
 #define MAUSEZAHN_VERSION_SHORT "0.40"
 //
 //
@@ -100,6 +100,15 @@ static inline void verbose_l2(const char *format, ...)
 #define ETH_DST 2   // These are only some symbols used by some functions.
 #define SRC_PORT 1  // These are only some symbols used by some functions.
 #define DST_PORT 2  // These are only some symbols used by some functions.
+
+#define TCP_MAX_ISLAND_NUM  	(0x04 * 2)// the size of the sack islands buffer
+#define TCP_OPTION_MSS 			0x01
+#define TCP_OPTION_SACK_PMT 	0x02 
+#define TCP_OPTION_TIMESTAMPS 	0x04
+#define TCP_OPTION_WIN_SCALING 	0x08
+#define TCP_OPTION_ISLANDS 		0x10
+
+
 
 #define TEST fprintf(stderr, "HERE at line %i in file %s\n", __LINE__,__FILE__ ); fflush(stderr);
 
@@ -489,6 +498,19 @@ struct tx_struct
    u_int32_t 
      tcp_sum_part,
      tcp_payload_s;
+   // TCP options
+   u_int8_t
+	 tcp_option_flag;
+   u_int8_t
+	 tcp_win_scale;
+   u_int32_t
+	 tcp_ts_val,
+	 tcp_ts_ecr;
+   u_int32_t
+	 tcp_mss;
+   u_int32_t
+	 tcp_islands_num,
+     tcp_islands[TCP_MAX_ISLAND_NUM];
 
    // RTP parameters
    u_int32_t
@@ -726,10 +748,10 @@ int get_mpls_params(char *params);
 int exists(char* str, char* ch);
 
 
-// Applies another random address to a given buffer.
-// (The calling function should check 'tx.eth_(dst|src)_rand' whether the address
+// Applies another random Ethernet source address to a given Ethernet-PTAG.
+// (The calling function should check 'tx.eth_src_rand' whether the SA 
 // should be randomized.)
-void rand_addr(u_int8_t *addr);
+int update_Eth_SA(libnet_t *l, libnet_ptag_t t);
 
 
 // Update timestamp and sequence number in the RTP header.

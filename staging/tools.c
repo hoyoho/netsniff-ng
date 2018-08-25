@@ -1497,7 +1497,18 @@ int mz_tok(char * str, char * delim, int anz, ...)
 }
 
 
-
+void reverse_byte(uint8_t *byte_array, int len)
+{
+    uint8_t c;
+    int i = 0;
+    while (i <= len / 2 - 1)
+    {
+        c = *(byte_array + i);
+        *(byte_array + i) = *(byte_array + len - 1 - i);
+        *(byte_array + len - 1 - i) = c;
+        i++;
+    }
+}
 
 
 

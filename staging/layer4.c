@@ -117,7 +117,7 @@
 		"|  flags      fin|syn|rst|psh|ack|urg|ecn|cwr\n" \
 		"|  s          0-4294967295                         Sequence Nr.\n" \
 		"|  a          0-4294967295                         Acknowledgement Nr.\n" \
-		"|  win        0-65535							    Window Size\n" \
+		"|  win        0-65535                              Window Size\n" \
 		"|  urg        0-65535                              Urgent Pointer\n" \
 		"|  tcp_sum    0-65535                              Checksum\n" \
 		"|  mss        0-65535                              TCP MSS\n" \

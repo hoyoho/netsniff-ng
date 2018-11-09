@@ -117,7 +117,7 @@
 		"|  flags      fin|syn|rst|psh|ack|urg|ecn|cwr\n" \
 		"|  s          0-4294967295                         Sequence Nr.\n" \
 		"|  a          0-4294967295                         Acknowledgement Nr.\n" \
-		"|  win        0-65535                              Window Size\n" \
+		"|  win        0-65535							    Window Size\n" \
 		"|  urg        0-65535                              Urgent Pointer\n" \
 		"|  tcp_sum    0-65535                              Checksum\n" \
 		"|  mss        0-65535                              TCP MSS\n" \
@@ -125,6 +125,7 @@
 		"|  ws_opt     0-15                                 Window Scale\n" \
 		"|  ts         0-65535_0-65535                      Timestamps\n" \
 		"|  island     0-4_l1_r1_l2_r2...l4_r4              Sack island\n" \
+		"|  coco       xid                                  Make coco option\n" \
 		"|\n" \
 		"| The port numbers can be specified as ranges, e. g. \"dp=1023-33700\".\n" \
 		"| Multiple flags can be specified such as \"flags=syn|ack|urg\".\n" \
@@ -815,11 +816,17 @@ libnet_ptag_t  create_tcp_packet (libnet_t *l)
      {
         tx.tcp_sum = (u_int16_t) str2int(argval);
      }
-
+   
 	if (getarg(tx.arg_string,"mss", argval)==1)
 	  {
 		 tx.tcp_mss = (u_int16_t) str2int(argval);
 		 tx.tcp_option_flag |= TCP_OPTION_MSS;
+	  }
+
+	if (getarg(tx.arg_string,"coco", argval)==1)
+	  {
+		 tx.tcp_xid = (u_int32_t) str2int(argval);
+		 tx.tcp_option_flag |= TCP_OPTION_COCO;
 	  }
 
 	if (getarg(tx.arg_string,"sack", argval)==1)
@@ -838,7 +845,7 @@ libnet_ptag_t  create_tcp_packet (libnet_t *l)
 	
 	if (getarg(tx.arg_string,"ts", argval)==1)
      {
-	//generally speaking, there would be tow time values:
+		//generally speaking, there would be tow time values:
 		dummy1 = strtok(argval, "_");
 		tx.tcp_ts_val = (u_int32_t) str2int (dummy1);
 		if (  (dummy2 = strtok(NULL, "_")) == NULL ) // no additional value
@@ -910,74 +917,104 @@ libnet_ptag_t  create_tcp_packet (libnet_t *l)
 
 
    if(0 != tx.tcp_option_flag)
-   	{	
+   	{	if(tx.tcp_option_flag & TCP_OPTION_COCO)
+        {
+        	tcp_options_buffer[tcp_option_length++] = 0xFD;//kind = 253
+			tcp_options_buffer[tcp_option_length++] = 16 + tx.tcp_islands_num * 8;//length
+            tcp_options_buffer[tcp_option_length++] = 0x80;//Exid
+            tcp_options_buffer[tcp_option_length++] = 0x00;//Exid
+            tx.tcp_xid |= 0xFF000000;
+			*((u_int32_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_xid;
+			reverse_byte(&tcp_options_buffer[tcp_option_length],4);
+			tcp_option_length += 4;
+            
+			*((u_int32_t*)(&tcp_options_buffer[tcp_option_length]))= tx.tcp_ts_val;
+			reverse_byte(&tcp_options_buffer[tcp_option_length],4);
+			tcp_option_length += 4;
+            
+            *((u_int32_t*)(&tcp_options_buffer[tcp_option_length]))= tx.tcp_ts_ecr;
+			reverse_byte(&tcp_options_buffer[tcp_option_length],4);
+			tcp_option_length += 4;
 
-		if (tx.tcp_control & 0x02) // packets with syn does not require sack islands.
-		  {
-		  	tx.tcp_option_flag &= ~TCP_OPTION_ISLANDS;
-		  }
-
-		if( tx.tcp_option_flag & TCP_OPTION_MSS)
+        	for(i = 0; i != (tx.tcp_islands_num << 1); i++)
 			{
-			   	tcp_options_buffer[tcp_option_length++] = 0x02;
-				tcp_options_buffer[tcp_option_length++] = 0x04;
-				*((u_int16_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_mss;
-				reverse_byte(&tcp_options_buffer[tcp_option_length],2);
-				tcp_option_length += 2;
-			}
-		
-		if( tx.tcp_option_flag & TCP_OPTION_SACK_PMT)
-			{
-				if((tx.tcp_option_flag & TCP_OPTION_TIMESTAMPS) == 0)//不用顶格写
-				{
-					tcp_options_buffer[tcp_option_length++] = 0x01;
-					tcp_options_buffer[tcp_option_length++] = 0x01;
-				}
-				tcp_options_buffer[tcp_option_length++] = 0x04;
-				tcp_options_buffer[tcp_option_length++] = 0x02;
-			}
-
-   		if( tx.tcp_option_flag & TCP_OPTION_TIMESTAMPS)
-   			{
-				if((tx.tcp_option_flag & TCP_OPTION_SACK_PMT) == 0 )
-					{
-						tcp_options_buffer[tcp_option_length++] = 0x01;
-						tcp_options_buffer[tcp_option_length++] = 0x01;
-					}
-
-				tcp_options_buffer[tcp_option_length++] = 0x08;
-				tcp_options_buffer[tcp_option_length++] = 0x0A;
-
-				*((u_int32_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_ts_val;
+				*((u_int32_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_islands[i];
 				reverse_byte(&tcp_options_buffer[tcp_option_length],4);
 				tcp_option_length += 4;
-				*((u_int32_t*)(&tcp_options_buffer[tcp_option_length]))= tx.tcp_ts_ecr;
-				reverse_byte(&tcp_options_buffer[tcp_option_length],4);
-				tcp_option_length += 4;
-   			}
-		
-		if( tx.tcp_option_flag & TCP_OPTION_WIN_SCALING)	
-			{
-				tcp_options_buffer[tcp_option_length++] = 0x01;
-				tcp_options_buffer[tcp_option_length++] = 0x03;
-				tcp_options_buffer[tcp_option_length++] = 0x03;
-				tcp_options_buffer[tcp_option_length++] = tx.tcp_win_scale;
 			}
-		
-		if(tx.tcp_option_flag & TCP_OPTION_ISLANDS)
-			{
-				tcp_options_buffer[tcp_option_length++] = 0x01;
-				tcp_options_buffer[tcp_option_length++] = 0x01;
-				tcp_options_buffer[tcp_option_length++] = 0x05;
-				tcp_options_buffer[tcp_option_length++] = 2 + tx.tcp_islands_num * 8;
 
-				for(i = 0; i != (tx.tcp_islands_num << 1); i++)
-				{
-					*((u_int32_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_islands[i];
-					reverse_byte(&tcp_options_buffer[tcp_option_length],4);
-					tcp_option_length += 4;
-				}
-			}
+        }
+        else
+        {
+            if (tx.tcp_control & 0x02) // packets with syn does not require sack islands.
+    		  {
+    		  	tx.tcp_option_flag &= ~TCP_OPTION_ISLANDS;
+    		  }
+
+    		if( tx.tcp_option_flag & TCP_OPTION_MSS)
+    			{
+    			   	tcp_options_buffer[tcp_option_length++] = 0x02;
+    				tcp_options_buffer[tcp_option_length++] = 0x04;
+    				*((u_int16_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_mss;
+    				reverse_byte(&tcp_options_buffer[tcp_option_length],2);
+    				tcp_option_length += 2;
+    			}
+    		
+    		if( tx.tcp_option_flag & TCP_OPTION_SACK_PMT)
+    			{
+    				if((tx.tcp_option_flag & TCP_OPTION_TIMESTAMPS) == 0)//不用顶格写
+    				{
+    					tcp_options_buffer[tcp_option_length++] = 0x01;
+    					tcp_options_buffer[tcp_option_length++] = 0x01;
+    				}
+    				tcp_options_buffer[tcp_option_length++] = 0x04;
+    				tcp_options_buffer[tcp_option_length++] = 0x02;
+    			}
+
+       		if( tx.tcp_option_flag & TCP_OPTION_TIMESTAMPS)
+       			{
+    				if((tx.tcp_option_flag & TCP_OPTION_SACK_PMT) == 0 )
+    					{
+    						tcp_options_buffer[tcp_option_length++] = 0x01;
+    						tcp_options_buffer[tcp_option_length++] = 0x01;
+    					}
+
+    				tcp_options_buffer[tcp_option_length++] = 0x08;
+    				tcp_options_buffer[tcp_option_length++] = 0x0A;
+
+    				*((u_int32_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_ts_val;
+    				reverse_byte(&tcp_options_buffer[tcp_option_length],4);
+    				tcp_option_length += 4;
+    				*((u_int32_t*)(&tcp_options_buffer[tcp_option_length]))= tx.tcp_ts_ecr;
+    				reverse_byte(&tcp_options_buffer[tcp_option_length],4);
+    				tcp_option_length += 4;
+       			}
+    		
+    		if( tx.tcp_option_flag & TCP_OPTION_WIN_SCALING)	
+    			{
+    				tcp_options_buffer[tcp_option_length++] = 0x01;
+    				tcp_options_buffer[tcp_option_length++] = 0x03;
+    				tcp_options_buffer[tcp_option_length++] = 0x03;
+    				tcp_options_buffer[tcp_option_length++] = tx.tcp_win_scale;
+    			}
+    		
+    		if(tx.tcp_option_flag & TCP_OPTION_ISLANDS)
+    			{
+    				tcp_options_buffer[tcp_option_length++] = 0x01;
+    				tcp_options_buffer[tcp_option_length++] = 0x01;
+    				tcp_options_buffer[tcp_option_length++] = 0x05;
+    				tcp_options_buffer[tcp_option_length++] = 2 + tx.tcp_islands_num * 8;
+
+    				for(i = 0; i != (tx.tcp_islands_num << 1); i++)
+    				{
+    					*((u_int32_t*)(&tcp_options_buffer[tcp_option_length])) = tx.tcp_islands[i];
+    					reverse_byte(&tcp_options_buffer[tcp_option_length],4);
+    					tcp_option_length += 4;
+    				}
+    			}
+        }
+
+
 
 		t2 = libnet_build_tcp_options(tcp_options_buffer,
 				     tcp_option_length, 
